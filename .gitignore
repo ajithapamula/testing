@@ -1,0 +1,62 @@
+# === Python Bytecode ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# === Virtual Environments ===
+venv/
+tvenv/
+.venv/
+.env/
+
+# === Environment Variables ===
+.env
+.env.*
+
+# === IDEs & Editors ===
+.vscode/
+.idea/
+*.swp
+
+# === OS Files ===
+.DS_Store
+Thumbs.db
+
+# === Log Files ===
+*.log
+logs/
+
+# === Video & Audio Artifacts ===
+recordings/
+*.mp4
+*.avi
+*.mov
+*.wav
+*.mp3
+*.flac
+
+# === Output Documents & Artifacts ===
+output_docs/
+*.docx
+*.png
+
+# === Temporary Files ===
+*.tmp
+*.bak
+*.old
+*~
+
+# === Graphviz DOT Outputs ===
+*.gv
+*.gv.*
+*.dot
+*.dot.*
+
+# === FFmpeg Generated Files ===
+*.ts
+*.mkv
+
+# === Misc ===
+__init__.pyc
