@@ -20,6 +20,10 @@ from pydantic import BaseModel
 import uvicorn
 from typing import Optional
 import logging
+from fastapi.responses import HTMLResponse
+from fastapi import Form
+import os
+
 
 # === Setup Logging ===
 logging.basicConfig(level=logging.INFO)
@@ -336,33 +340,50 @@ End Document with Standardized "Suggested Next Steps" Note
 
 def extract_dot_code(text: str):
     if "```dot" in text:
-        start = text.find("```dot") + 7
+        start = text.find("```dot") + len("```dot")
         end = text.find("```", start)
         return text[start:end].strip()
     return None
+    
 
 def generate_graphviz_image(dot_code: str, path: str):
     try:
         s = Source(dot_code)
-        return s.render(filename=path, format="png", cleanup=True) + ".png"
+        output_path = s.render(filename=path, format="png", cleanup=True)
+        logger.info(f"[GRAPHVIZ] Mind map saved to: {output_path}")
+        return output_path
     except Exception as e:
         logger.error(f"[ERROR] DOT render failed: {e}")
         return None
 
+
 def save_docx(content: str, image_path: Optional[str], filename: str):
     doc = Document()
     doc.add_heading("Summary Document", 0)
+
+    dot_code = None
     if "```dot" in content:
+        dot_code = content.split("```dot")[1].split("```", 1)[0].strip()
         content = content.split("```dot")[0].strip()
+
     for line in content.splitlines():
         doc.add_paragraph(line)
+
     if image_path and os.path.exists(image_path):
         doc.add_page_break()
         doc.add_heading("Mind Map", level=1)
         doc.add_picture(image_path, width=Inches(6))
+    elif dot_code:
+        doc.add_page_break()
+        doc.add_heading("Mind Map (DOT Format)", level=1)
+        doc.add_paragraph(dot_code)
+
     filepath = os.path.join(OUTPUT_DOC_DIR, filename)
     doc.save(filepath)
+    logger.info(f"[DOCX] Summary saved to: {filepath}")
     return filepath
+
+
 
 def save_transcript_docx(transcript: str, filename: str):
     doc = Document()
@@ -373,50 +394,78 @@ def save_transcript_docx(transcript: str, filename: str):
     return path
 
 async def process_video(video_path: str, meeting_id: str, user_id: str):
-    original_filename = os.path.splitext(os.path.basename(video_path))[0]
-    filename_prefix = f"{meeting_id}_{user_id}_{original_filename}"
-
-    if collection.find_one({"video_path": video_path}):
-        logger.info("[SKIP] Already processed.")
+    # === Skip if already processed ===
+    existing_entry = collection.find_one({"video_path": os.path.abspath(video_path)})
+    if existing_entry:
+        logger.info(f"[SKIP] Already processed: {video_path}")
         return {"status": "skipped", "message": "Video already processed"}
 
-    compressed, audio = compress_and_extract(video_path, filename_prefix)
-    if not compressed or not audio:
+    # === Generate ID and paths ===
+    original_filename = os.path.splitext(os.path.basename(video_path))[0]
+    video_id = original_filename
+    filename_prefix = f"{meeting_id}_{user_id}_{video_id}"
+
+    # === Compress & extract audio ===
+    compressed_video, audio_path = compress_and_extract(video_path, video_id)
+    if not compressed_video or not audio_path:
         raise HTTPException(status_code=500, detail="Compression failed")
 
-    chunks = split_audio_chunks(audio, filename_prefix)
-    transcript = transcribe_chunks(chunks)
-    if not transcript.strip():
-        logger.info("[SKIP] Empty transcript.")
-        raise HTTPException(status_code=400, detail="Empty transcript")
+    # === Split into audio chunks ===
+    chunk_paths = split_audio_chunks(audio_path, video_id)
+    transcription = transcribe_chunks(chunk_paths)
 
-    context = get_web_contexts(["General AI"])
-    summary = summarize_segment(transcript, context)
+    if not transcription.strip():
+        raise HTTPException(status_code=400, detail="Empty transcription")
+
+    # === Dynamic topic extraction ===
+    def extract_keywords(transcript: str, top_n: int = 3) -> list:
+        import re
+        from collections import Counter
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', transcript.lower())
+        stop_words = {'this', 'that', 'from', 'with', 'your', 'have', 'will', 'which', 'into', 'should', 'would', 'about', 'where', 'there', 'their', 'been'}
+        filtered = [word for word in words if word not in stop_words]
+        common = Counter(filtered).most_common(top_n)
+        return [word for word, _ in common]
+
+    topics = extract_keywords(transcription)
+    context = get_web_contexts(topics)
+
+    # === Summarize + generate mind map ===
+    summary = summarize_segment(transcription, context)
     dot_code = extract_dot_code(summary)
-    mindmap = generate_graphviz_image(dot_code, os.path.join(OUTPUT_DOC_DIR, f"{filename_prefix}_mindmap")) if dot_code else None
 
-    doc1 = save_transcript_docx(transcript, f"{filename_prefix}_transcript.docx")
-    doc2 = save_docx(summary, mindmap, f"{filename_prefix}_summary.docx")
+    mindmap_path = None
+    if dot_code:
+        mindmap_path = os.path.join(OUTPUT_DOC_DIR, f"{filename_prefix}_mindmap")
+        mindmap_path = generate_graphviz_image(dot_code, mindmap_path)
 
+    # === Save docs ===
+    transcript_docx = save_transcript_docx(transcription, f"{filename_prefix}_transcript.docx")
+    summary_docx = save_docx(summary, mindmap_path, f"{filename_prefix}_summary.docx")
+
+    # === MongoDB Insert ===
     collection.insert_one({
         "video_path": os.path.abspath(video_path),
+        "original_filename": original_filename,
         "meeting_id": meeting_id,
         "user_id": user_id,
-        "transcript_doc_path": os.path.abspath(doc1),
-        "summary_doc_path": os.path.abspath(doc2),
-        "mindmap_image_path": os.path.abspath(mindmap) if mindmap else None,
+        "transcript_doc_path": os.path.abspath(transcript_docx),
+        "summary_doc_path": os.path.abspath(summary_docx),
+        "mindmap_image_path": os.path.abspath(mindmap_path) if mindmap_path else None,
         "timestamp": datetime.now()
     })
 
-    os.remove(compressed)
-    os.remove(audio)
-    logger.info("[DONE] Process complete.")
+    # === Clean up temp files ===
+    os.remove(compressed_video)
+    os.remove(audio_path)
+
     return {
         "status": "success",
-        "transcript_doc": doc1,
-        "summary_doc": doc2,
-        "mindmap_image": mindmap
+        "transcript_doc": transcript_docx,
+        "summary_doc": summary_docx,
+        "mindmap_image": mindmap_path
     }
+
 
 # === API Endpoints ===
 @app.on_event("startup")
@@ -431,8 +480,9 @@ async def upload_video(file: UploadFile = File(...), meeting_id: str = "", user_
             raise HTTPException(status_code=400, detail="Unsupported file format. Use .mp4, .mov, or .avi")
 
         # Save uploaded video
-        video_id = str(uuid.uuid4())
-        video_path = os.path.join(VIDEO_DIR, f"{video_id}.mp4")  # Fixed typo: video_id instead of video hous_id
+        original_filename = os.path.splitext(file.filename)[0]
+        video_path = os.path.join(VIDEO_DIR, f"{original_filename}.mp4")
+ # Fixed typo: video_id instead of video hous_id
         with open(video_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
@@ -444,13 +494,28 @@ async def upload_video(file: UploadFile = File(...), meeting_id: str = "", user_
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload/")
-async def upload_video_alias(file: UploadFile = File(...), meeting_id: str = "", user_id: str = ""):
+async def upload_video_alias(
+    file: UploadFile = File(...),
+    meeting_id: str = Form(...),
+    user_id: str = Form(...)
+):
     logger.info("Received request to /upload; redirecting to /upload-video/")
     return await upload_video(file, meeting_id, user_id)
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+from fastapi.responses import HTMLResponse
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_root():
+    try:
+        with open("static/index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>index.html not found</h1>", status_code=404)
+    except Exception as e:
+        return HTMLResponse(content=f"<h1>Error: {e}</h1>", status_code=500)
 
 # === Run the App ===
 if __name__ == "__main__":
