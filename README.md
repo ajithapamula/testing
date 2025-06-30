@@ -37,4 +37,14 @@ This project is a full-stack AI-powered video processing API built with **FastAP
 ---
 
 ## 📂 Folder Structure
-
+project-root/
+│
+├── app.py # Main FastAPI backend
+├── recordings/ # Video/audio storage
+│ ├── processed/ # Compressed, denoised outputs
+│ ├── chunks/ # Audio chunks for Whisper
+│
+├── output_docs/ # Generated transcripts & guides
+│ ├── *.docx # .docx files for each meeting
+│
+├── logs/ # (optional) store logs
