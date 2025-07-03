@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+openai==0.28.0
+fastapi
+uvicorn
+fpdf
+openai
+azure-storage-blob
+pymongo
+graphviz
+ffmpeg-python
+

@@ -29,7 +29,7 @@ This project is a full-stack AI-powered video processing API built with **FastAP
 | Transcription     | OpenAI Whisper                          |
 | Summarization     | GPT-4 via OpenAI API                    |
 | Audio/Video Tools | FFmpeg                                  |
-| Documentation     | `python-docx`, Graphviz                 |
+| Documentation     | `python-pdf`, Graphviz                 |
 | Database (NoSQL)  | MongoDB                                 |
 | Database (SQL)    | SQL Server (ODBC Driver 17)             |
 | Search Context    | DuckDuckGo Search + BeautifulSoup       |
