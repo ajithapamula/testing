@@ -18,7 +18,7 @@ import openai
 import logging
 from fpdf import FPDF
 import re
-
+import time
 # === CONFIGURATION ===
 AZURE_CONN_STR = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 AZURE_STORAGE_ACCOUNT = "connectlystorage"
